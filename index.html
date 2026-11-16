@@ -75,5 +75,22 @@
   setTimeout(hide,9000);
 })();
 </script>
+<script>
+/* ===== alerts on this phone / laptop (messages come from the CRM inside the frame) ===== */
+(function(){
+  var reg=null,base=document.title;
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(function(r){reg=r}).catch(function(){})}
+  function perm(){return 'Notification' in window?Notification.permission:'none'}
+  function tell(){try{document.getElementById('app').contentWindow.postMessage({bigPerm:perm()},'*')}catch(e){}}
+  function show(n){if(perm()!=='granted')return;var o={body:n.body||'',icon:'icon-192.png',badge:'icon-192.png',tag:n.tag||'big',renotify:true,vibrate:[200,100,200]};
+    (reg?reg.showNotification(n.title||'Best India Group CRM',o):Promise.reject()).catch(function(){try{new Notification(n.title||'Best India Group CRM',o)}catch(e){}})}
+  window.addEventListener('message',function(ev){var d=ev.data||{};
+    if(d.bigPermQ)tell();
+    if(d.bigAskPerm&&'Notification' in window){try{Notification.requestPermission().then(tell,tell)}catch(e){Notification.requestPermission(tell)}}
+    if(d.bigNotify)show(d.bigNotify);
+    if(typeof d.bigCount==='number'){document.title=d.bigCount>0?'('+d.bigCount+') '+base:base;try{if(navigator.setAppBadge){d.bigCount>0?navigator.setAppBadge(d.bigCount):navigator.clearAppBadge()}}catch(e){}}
+  });
+})();
+</script>
 </body>
 </html>
