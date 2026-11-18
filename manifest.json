@@ -1,5 +1,7 @@
 {
+  "id": "./",
   "name": "Best India Group CRM",
+  "description": "Best India Group CRM - projects, leads and work",
   "short_name": "BIG CRM",
   "start_url": "./",
   "scope": "./",
