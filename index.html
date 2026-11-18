@@ -92,5 +92,37 @@
   });
 })();
 </script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script>
+/* ===== phone alerts even when the CRM is closed (Google Firebase) ===== */
+(function(){
+  var CFG={apiKey:"AIzaSyCHVzY3_9mGKBYaIAfx5sCJ-Wo7YP5eKxY",authDomain:"bigcrm-8bc50.firebaseapp.com",projectId:"bigcrm-8bc50",storageBucket:"bigcrm-8bc50.firebasestorage.app",messagingSenderId:"866789460849",appId:"1:866789460849:web:003c674626d1e96c03c4d0"};
+  var VAPID="BI4a0MkX-iB1Pm1seCQQgwJCwyb9cr29gLi39l2LaNJZrpyguTNoSxQmBOw7tfJijsN1tJIm7T6cxoOwj1jdrOw";
+  var tok=null,src=null,msg=null;
+  try{if(window.firebase){firebase.initializeApp(CFG);msg=firebase.messaging()}}catch(e){}
+  function send(){if(tok&&src){try{src.postMessage({bigPushToken:tok},'*')}catch(e){}}}
+  function getTok(){if(!msg||!('serviceWorker' in navigator)||!('Notification' in window)||Notification.permission!=='granted')return;
+    navigator.serviceWorker.register('sw.js').then(function(r){return msg.getToken({vapidKey:VAPID,serviceWorkerRegistration:r})})
+      .then(function(t){if(t){tok=t;send()}}).catch(function(){})}
+  window.addEventListener('message',function(ev){var d=ev.data||{};if(d.bigPushQ){src=ev.source;if(tok)send();else getTok()}});
+  if(msg){try{msg.onMessage(function(p){var n=(p&&p.notification)||{};if(document.hidden&&Notification.permission==='granted'&&navigator.serviceWorker){navigator.serviceWorker.ready.then(function(r){r.showNotification(n.title||'Best India Group CRM',{body:n.body||'',icon:'icon-192.png',badge:'icon-192.png',tag:'big-push',renotify:true})})}})}catch(e){}}
+  function bar(){
+    var b=document.getElementById('pushbar'),ios=/iPhone|iPad|iPod/.test(navigator.userAgent),home=window.navigator.standalone||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches),
+        can='Notification' in window&&'serviceWorker' in navigator,need=can?Notification.permission==='default':(ios&&!home);
+    if(!need){if(b)b.remove();return}if(b)return;
+    b=document.createElement('div');b.id='pushbar';
+    b.style.cssText='position:fixed;left:10px;right:10px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:10px;align-items:center;justify-content:space-between;background:#0F458B;color:#fff;padding:10px 12px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.28);font:600 14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif';
+    var bs='border:0;border-radius:8px;padding:8px 12px;font:700 13px system-ui,sans-serif;cursor:pointer';
+    b.innerHTML=can?'<span>&#128276; Get task alerts on this phone, even when the CRM is closed</span><span style="white-space:nowrap"><button id="pbOn" style="'+bs+';background:#fff;color:#0F458B">Turn on</button> <button id="pbX" aria-label="Close" style="'+bs+';background:transparent;color:#fff">&#10005;</button></span>'
+                   :'<span>&#128276; To get alerts on iPhone: tap Share &#11014;&#65039; then <b>Add to Home Screen</b>, and open the CRM from that icon.</span><button id="pbX" aria-label="Close" style="'+bs+';background:transparent;color:#fff">&#10005;</button>';
+    document.body.appendChild(b);
+    var on=document.getElementById('pbOn');if(on)on.onclick=function(){Notification.requestPermission().then(function(p){if(p==='granted')getTok();bar()})};
+    document.getElementById('pbX').onclick=function(){b.remove();try{sessionStorage.setItem('pbx','1')}catch(e){}};
+  }
+  setTimeout(function(){try{if(sessionStorage.getItem('pbx'))return}catch(e){}bar()},4500);
+  if('Notification' in window&&Notification.permission==='granted')getTok();
+})();
+</script>
 </body>
 </html>
