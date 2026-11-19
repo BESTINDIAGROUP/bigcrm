@@ -1,4 +1,4 @@
-// Best India Group CRM - STOCK & STORE (server).  Version s1
+// Best India Group CRM - STOCK & STORE (server).  Version s3
 // A separate file in the same Apps Script project. It uses the CRM's existing spreadsheet (ss_ / sheet_),
 // sign-in check (auth_), lock and settings - it does not change any existing function or sheet.
 // Sheets used (created on first use, in the SAME spreadsheet): Stock_Products, Stock_Categories,
@@ -10,7 +10,7 @@
 
 const STK = { P: "Stock_Products", C: "Stock_Categories", M: "Stock_Movements", S: "Stock_Settings", A: "Stock_Audit", N: "Stock_Snapshot" };
 const STK_H = {
-  P: ["Product ID", "Serial No", "Product Name", "Product Code", "Category", "Subcategory", "Specification", "Description", "Unit", "Rate", "Quantity", "Min Level", "Stock Value", "Status", "Updated At", "Updated By"],
+  P: ["Product ID", "Serial No", "Product Name", "Product Code", "Category", "Subcategory", "Specification", "Description", "Unit", "Rate", "Quantity", "Min Level", "Stock Value", "Status", "Updated At", "Updated By", "Brand"],
   C: ["ID", "Category", "Subcategory", "Status"],
   M: ["Movement ID", "Date", "Type", "Product ID", "Product Name", "Quantity", "Balance After", "Store", "Project ID", "Project", "Sub-project", "Furnishing Status", "Remarks", "Staff", "User ID", "Recorded At", "Source"],
   S: ["Key", "Value"],
@@ -19,7 +19,7 @@ const STK_H = {
 };
 const STK_NUM = { "Serial No": 1, "Rate": 1, "Quantity": 1, "Min Level": 1, "Stock Value": 1, "Balance After": 1 };
 const STK_TYPES = { "Stock In": 1, "Return": 1, "Stock Issued": -1, "Damage / Loss": -1, "Adjustment": 0 };
-const STK_PF = ["Serial No", "Product Name", "Product Code", "Category", "Subcategory", "Specification", "Description", "Unit", "Rate", "Min Level", "Status"];
+const STK_PF = ["Serial No", "Product Name", "Product Code", "Brand", "Category", "Subcategory", "Specification", "Description", "Unit", "Rate", "Min Level", "Status"];
 const STK_UNITS = ["Nos", "Sets", "Boxes", "Packs", "Kg", "Grams", "Metres", "Litres", "Rolls", "Pairs", "Pieces", "Units", "Assets"];
 const STK_CATS = [["Chemistry", ["Glassware", "Chemicals", "Apparatus"]], ["Physics", ["Electronics", "Measuring Instruments", "Laboratory Apparatus"]], ["Mathematics", ["Geometry Instruments", "Mathematical Models"]], ["Biology", ["Microscopes", "Slides", "Dissection Instruments"]], ["IT Products", ["Computers", "Printers", "Accessories"]], ["Other", []]];
 const STK_STATUS = ["Issued", "Delivered to school", "Installed / Furnished"];
@@ -29,13 +29,14 @@ function stkNow_() { return Utilities.formatDate(new Date(), Session.getScriptTi
 function stkToday_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"); }
 function stkStr_(v) { if (v === null || v === undefined) return ""; if (Object.prototype.toString.call(v) === "[object Date]") return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd"); return String(v).trim(); }
 function stkNum_(v) { if (v === "" || v === null || v === undefined) return null; const n = typeof v === "number" ? v : Number(String(v).replace(/[₹,\s]/g, "")); return isFinite(n) ? n : NaN; }
+function stkPK_(v) { return stkKey_(v["Product Name"]) + "|" + stkKey_(v.Specification) + "|" + stkKey_(v.Brand); }
 function stkKey_(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, ""); }
 function stkAN_(v) { return STK_H.A.slice(0, 12).map(h => (v[h] === null || v[h] === undefined ? "" : String(v[h])).trim()).join("|"); }
 function stkHash_(s) { return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(s))).slice(0, 16); }
 function stkSettings_() {
   if (STK_MEMO._S) return STK_MEMO._S;
   const out = {}; stkRows_("S").forEach(r => { try { out[r.v.Key] = JSON.parse(r.v.Value); } catch (e) { out[r.v.Key] = r.v.Value; } });
-  out.keepers = out.keepers || []; out.units = out.units || STK_UNITS.slice(); out.statuses = out.statuses || STK_STATUS.slice();
+  out.keepers = out.keepers || []; out.brands = out.brands || []; out.units = out.units || STK_UNITS.slice(); out.statuses = out.statuses || STK_STATUS.slice();
   out.stores = out.stores || [{ id: "main", n: "Central Store" }]; STK_MEMO._S = out; return out;
 }
 function stkSetSetting_(k, v) {
@@ -62,6 +63,9 @@ function stkSheet_(k) {
       H.forEach((h, i) => { if (!STK_NUM[h]) sh.getRange(2, i + 1, Math.max(1, sh.getMaxRows() - 1), 1).setNumberFormat("@"); });
       if (k === "N") try { sh.hideSheet(); } catch (e) {}
     }
+  } else if (sh.getLastColumn() < H.length) {
+    const head = sh.getRange(1, 1, 1, H.length).getValues()[0];
+    H.forEach((h, i) => { if (head[i] === "" || head[i] === null) { sh.getRange(1, i + 1).setValue(h).setFontWeight("bold").setBackground("#0F458B").setFontColor("#ffffff"); if (!STK_NUM[h]) sh.getRange(2, i + 1, Math.max(1, sh.getMaxRows() - 1), 1).setNumberFormat("@"); } });
   }
   return sh;
 }
@@ -144,14 +148,14 @@ function stkSync_(src, who, quiet) {
   const catNames = {}; C.forEach(r => { if (r.v.Category && r.v.Status !== "Deleted") { catNames[stkKey_(r.v.Category)] = 1; if (r.v.Subcategory) catNames[stkKey_(r.v.Category) + "›" + stkKey_(r.v.Subcategory)] = 1; } });
   /* products */
   const P = stkRows_("P"), pSeen = {}, byKey = {}; let maxSl = 0;
-  P.forEach(r => { if (r.v["Serial No"] > maxSl) maxSl = r.v["Serial No"]; if (r.v["Product ID"] && r.v["Status"] !== "Deleted" && r.v["Status"] !== "Duplicate?") byKey[stkKey_(r.v["Product Name"]) + "|" + stkKey_(r.v.Specification)] = r.v["Product ID"]; });
+  P.forEach(r => { if (r.v["Serial No"] > maxSl) maxSl = r.v["Serial No"]; if (r.v["Product ID"] && r.v["Status"] !== "Deleted" && r.v["Status"] !== "Duplicate?") byKey[stkPK_(r.v)] = r.v["Product ID"]; });
   const prodById = {};
   P.forEach(r => {
     const v = r.v; let ch = false;
     if (!v["Product Name"]) { flags.push("Stock_Products row " + r.r + ": Product Name is empty."); if (v["Product ID"]) prodById[v["Product ID"]] = r; return; }
     if (v["Product ID"] && pSeen[v["Product ID"]]) { flags.push("Stock_Products row " + r.r + ": Product ID " + v["Product ID"] + " was repeated (copied row) – it was treated as a new row."); v["Product ID"] = ""; ch = true; }
     if (!v["Product ID"]) {
-      const k = stkKey_(v["Product Name"]) + "|" + stkKey_(v.Specification);
+      const k = stkPK_(v);
       if (byKey[k]) { if (v.Status !== "Duplicate?") { v.Status = "Duplicate?"; stkWrite_("P", r.r, v); } flags.push("Stock_Products row " + r.r + ": \"" + v["Product Name"] + "\" duplicates " + byKey[k] + " – not added. Delete the row or change the name / specification."); return; }
       if (v.Status === "Duplicate?") v.Status = "";
       np++; v["Product ID"] = "P-" + String(np).padStart(6, "0"); if (!(v["Serial No"] > 0)) { maxSl++; v["Serial No"] = maxSl; }
@@ -217,12 +221,12 @@ function stkSync_(src, who, quiet) {
   const mids = {}; M.forEach(r => { if (r.v["Movement ID"]) mids[r.v["Movement ID"]] = 1; });
   return { P, C, M, X, S, flags, mids, snap: ns, full: true };
 }
-function stkDesc_(o) { return ["Serial " + (o["Serial No"] || ""), o["Product Name"], o.Specification, o["Product Code"], o.Category + (o.Subcategory ? " › " + o.Subcategory : ""), "Unit " + (o.Unit || ""), "Rate " + (o.Rate === null || o.Rate === undefined ? "" : o.Rate), "Qty " + (o.Quantity === null || o.Quantity === undefined ? "" : o.Quantity)].filter(x => x && String(x).trim()).join(" · "); }
+function stkDesc_(o) { return ["Serial " + (o["Serial No"] || ""), o["Product Name"], o.Specification, o.Brand ? "Brand " + o.Brand : "", o["Product Code"], o.Category + (o.Subcategory ? " › " + o.Subcategory : ""), "Unit " + (o.Unit || ""), "Rate " + (o.Rate === null || o.Rate === undefined ? "" : o.Rate), "Qty " + (o.Quantity === null || o.Quantity === undefined ? "" : o.Quantity)].filter(x => x && String(x).trim()).join(" · "); }
 function stkMovDesc_(v) { return [v.Date, v.Type, v.Quantity, v["Product Name"], v.Project, v.Remarks].filter(x => x !== "" && x !== null && x !== undefined).join(" · "); }
 function stkActOf_(t) { return t === "Stock In" ? "Stock Added" : t === "Return" ? "Stock Returned" : t === "Stock Issued" ? "Stock Issued" : t === "Damage / Loss" ? "Damage / Loss" : "Stock Adjusted"; }
 
 /* ---------------- fast path: normal loads and saves read only what they need ---------------- */
-function stkNeedFull_() { const a = +(props_().getProperty("STK_FULLAT") || 0); return !a || Date.now() - a > 10 * 60 * 1000; }
+function stkNeedFull_(mins) { const a = +(props_().getProperty("STK_FULLAT") || 0); return !a || Date.now() - a > (mins || 60) * 60 * 1000; }
 function stkLoad_() {
   const S = stkSettings_(), snap = stkSnapRead_(), P = stkRows_("P"), C = stkRows_("C"), sh = stkSheet_("M"), last = sh.getLastRow(), mids = {};
   let M = []; if (last >= 2) { sh.getRange(2, 1, last - 1, 1).getValues().forEach(r => { if (r[0]) mids[String(r[0])] = 1; }); M = stkRows_("M", last - 799, last); }
@@ -255,7 +259,7 @@ function stkModel_(me, D, have, mt) {
     if (pick && !meta && mt) { M = D.M.filter(r => String(r.v["Recorded At"]) > mt); out.mAdd = true; }
     out.M = M.slice(0, 600).map(r => MH.map(h => { const x = r.v[h]; return x === null || x === undefined ? "" : x; }));
   }
-  if (!pick || meta) { out.C = D.C.map(r => r.v); out.X = pm.admin ? Object.keys(D.X || {}).map(id => D.X[id]) : []; out.S = { units: D.S.units, statuses: D.S.statuses, stores: D.S.stores, keepers: D.S.keepers }; out.flags = pm.keeper ? D.flags : []; }
+  if (!pick || meta) { out.C = D.C.map(r => r.v); out.X = pm.admin ? Object.keys(D.X || {}).map(id => D.X[id]) : []; out.S = { units: D.S.units, statuses: D.S.statuses, stores: D.S.stores, keepers: D.S.keepers, brands: D.S.brands }; out.flags = pm.keeper ? D.flags : []; }
   return out;
 }
 /* after an app save: refresh the hidden snapshot only for what this save touched */
@@ -279,7 +283,9 @@ function crmStockRev(t) {
 // have = the change number the phone already has; only changes since then are sent.
 function crmStockGet(t, have, mt) {
   if (t && typeof t === "object") { have = t.have; mt = t.mt; t = t.t; }
-  const me = auth_(t), lock = LockService.getScriptLock();
+  const me = auth_(t);
+  if (+have > 0 && +have === stkSeq_() && !stkNeedFull_()) { const pm = stkPerm_(me); return { seq: stkSeq_(), na: +(props_().getProperty("STK_NA") || 0), delta: true, same: true, P: [], gone: [], me: { u: me.u, admin: pm.admin, keeper: pm.keeper, name: stkWho_(me.u) }, t: stkNow_() }; }
+  const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Stock is busy - trying again in a few seconds");
   try { const D = stkData_(); stkLogChanges_(); return stkModel_(me, D, have, mt); } finally { lock.releaseLock(); }
 }
@@ -328,9 +334,9 @@ function crmStockSave(o) {
       need(r, "Transaction not found"); const o0 = r.v["Furnishing Status"];
       if (o0 !== op.fs) { r.v["Furnishing Status"] = op.fs; stkWrite_("M", r.r, r.v); (STK_MEMO._stM = STK_MEMO._stM || []).push(r.v); STK_MEMO._meta = 1; A({ act: "Status Updated", pid: r.v["Product ID"], pn: r.v["Product Name"], f: "Furnishing status (" + op.mid + ")", o: o0, n: op.fs, rm: op.rm || r.v.Project || "" }); }
     } else if (op.k === "padd") {
-      need(pm.keeper); const v = stkClean_(op.v, pm), k = stkKey_(v["Product Name"]) + "|" + stkKey_(v.Specification); need(v["Product Name"], "Product Name is required");
-      const dup = P.find(r => r.v["Product ID"] && r.v.Status !== "Duplicate?" && stkKey_(r.v["Product Name"]) + "|" + stkKey_(r.v.Specification) === k);
-      if (dup) need(false, "DUPLICATE:" + dup.v["Product ID"] + ":This product already exists (" + dup.v["Product Name"] + (dup.v.Specification ? ", " + dup.v.Specification : "") + (dup.v.Status === "Deleted" ? " – deleted, ask the admin to restore it" : "") + ").");
+      need(pm.keeper); const v = stkClean_(op.v, pm), k = stkPK_(v); need(v["Product Name"], "Product Name is required");
+      const dup = P.find(r => r.v["Product ID"] && r.v.Status !== "Duplicate?" && stkPK_(r.v) === k);
+      if (dup) need(false, "DUPLICATE:" + dup.v["Product ID"] + ":This product already exists (" + dup.v["Product Name"] + (dup.v.Specification ? ", " + dup.v.Specification : "") + (dup.v.Brand ? ", brand " + dup.v.Brand : "") + (dup.v.Status === "Deleted" ? " – deleted, ask the admin to restore it" : "") + ").");
       let np = +(props_().getProperty("STK_NP") || 0) + 1; props_().setProperty("STK_NP", String(np));
       const sl = P.reduce((m, r) => Math.max(m, r.v["Serial No"] || 0), 0) + 1;
       Object.assign(v, { "Product ID": "P-" + String(np).padStart(6, "0"), "Serial No": sl, Quantity: null, "Stock Value": null, Status: "Active", "Updated At": t0, "Updated By": who });
@@ -340,14 +346,14 @@ function crmStockSave(o) {
       const cur = {}; STK_PF.forEach(f => cur[f] = r.v[f] === null || r.v[f] === undefined ? "" : String(r.v[f]));
       if (op.base) Object.keys(op.base).forEach(f => { if (f === "Rate" && !pm.admin) return; if ((cur[f] || "") !== (op.base[f] === null || op.base[f] === undefined ? "" : String(op.base[f]))) need(false, "CONFLICT:This product was changed by someone else or in Google Sheets. It has been reloaded – please check and save again."); });
       const v = stkClean_(op.v, pm); need(v["Product Name"], "Product Name is required");
-      const k = stkKey_(v["Product Name"]) + "|" + stkKey_(v.Specification), dup = P.find(x => x !== r && x.v["Product ID"] && x.v.Status !== "Duplicate?" && stkKey_(x.v["Product Name"]) + "|" + stkKey_(x.v.Specification) === k);
-      if (dup) need(false, "DUPLICATE:" + dup.v["Product ID"] + ":Another product already has this name and specification (" + dup.v["Product ID"] + ").");
+      const k = stkPK_(v), dup = P.find(x => x !== r && x.v["Product ID"] && x.v.Status !== "Duplicate?" && stkPK_(x.v) === k);
+      if (dup) need(false, "DUPLICATE:" + dup.v["Product ID"] + ":Another product already has this name, specification and brand (" + dup.v["Product ID"] + ").");
       let any = false; Object.keys(v).forEach(f => { if (f === "Rate" && !pm.admin) return; const a = r.v[f] === null || r.v[f] === undefined ? "" : String(r.v[f]), b = v[f] === null || v[f] === undefined ? "" : String(v[f]); if (a !== b) { any = true; A({ act: f === "Category" || f === "Subcategory" ? "Category Changed" : "Edited", pid: op.pid, pn: v["Product Name"], f, o: a, n: b, rm: op.rm || "" }); r.v[f] = v[f]; } });
       if (any) { r.v["Stock Value"] = typeof r.v.Quantity === "number" && typeof r.v.Rate === "number" ? Math.round(r.v.Quantity * r.v.Rate * 100) / 100 : null; r.v["Updated At"] = t0; r.v["Updated By"] = who; stkWrite_("P", r.r, r.v); }
     } else if (op.k === "pdel" || op.k === "prestore") {
       need(pm.admin, "Only the admin can delete or restore products"); const r = find(op.pid);
       if (op.k === "pdel") { need(r && r.v.Status !== "Deleted", "Product not found"); need(String(op.rm || "").trim(), "Please write why it is deleted"); r.v.Status = "Deleted"; r.v["Updated At"] = t0; r.v["Updated By"] = who; stkWrite_("P", r.r, r.v); A({ act: "Deleted", pid: op.pid, pn: r.v["Product Name"], f: "Status", o: stkDesc_(r.v), n: "Deleted", rm: op.rm }); }
-      else if (r) { need(r.v.Status === "Deleted", "This product is not deleted"); const k = stkKey_(r.v["Product Name"]) + "|" + stkKey_(r.v.Specification); need(!P.some(x => x !== r && x.v.Status === "Active" && stkKey_(x.v["Product Name"]) + "|" + stkKey_(x.v.Specification) === k), "An active product with the same name and specification exists - rename one first."); r.v.Status = "Active"; r.v["Updated At"] = t0; r.v["Updated By"] = who; stkWrite_("P", r.r, r.v); A({ act: "Restored", pid: op.pid, pn: r.v["Product Name"], f: "Status", o: "Deleted", n: "Active", rm: op.rm || "" }); }
+      else if (r) { need(r.v.Status === "Deleted", "This product is not deleted"); const k = stkPK_(r.v); need(!P.some(x => x !== r && x.v.Status === "Active" && stkPK_(x.v) === k), "An active product with the same name and specification exists - rename one first."); r.v.Status = "Active"; r.v["Updated At"] = t0; r.v["Updated By"] = who; stkWrite_("P", r.r, r.v); A({ act: "Restored", pid: op.pid, pn: r.v["Product Name"], f: "Status", o: "Deleted", n: "Active", rm: op.rm || "" }); }
       else { const x = (D.X || {})[op.pid]; need(x, "Deleted product not found"); const v = {}; STK_H.P.forEach(h => v[h] = x[h] === undefined ? "" : x[h]); v["Product ID"] = op.pid; v.Status = "Active"; v["Updated At"] = t0; v["Updated By"] = who;
         const all = stkRows_("M").filter(m => m.v["Product ID"] === op.pid && STK_TYPES[m.v.Type] !== undefined && typeof m.v.Quantity === "number"); v.Quantity = all.length ? all.reduce((a, m) => a + (STK_TYPES[m.v.Type] === 0 ? m.v.Quantity : STK_TYPES[m.v.Type] * m.v.Quantity), 0) : null;
         v["Stock Value"] = typeof v.Quantity === "number" && typeof v.Rate === "number" ? Math.round(v.Quantity * v.Rate * 100) / 100 : null; addP(v); delete D.X[op.pid]; A({ act: "Restored", pid: op.pid, pn: v["Product Name"], f: "Row restored", o: "Deleted in Google Sheet", n: "Active", rm: op.rm || "" }); }
@@ -366,15 +372,20 @@ function crmStockSave(o) {
         else { const to = String(op.to || "").trim(); const users = P.filter(p => p.v.Category === r.v.Category); if (users.length) need(to && to !== r.v.Category && C.some(x => !x.v.Subcategory && x.v.Category === to && x.v.Status !== "Deleted"), "Choose the category to move its " + users.length + " product(s) to"); users.forEach(p => { p.v.Category = to; p.v.Subcategory = ""; stkWrite_("P", p.r, p.v); moved++; }); C.forEach(x => { if (x.v.Category === r.v.Category) { x.v.Status = "Deleted"; stkWrite_("C", x.r, x.v); } }); }
         A({ act: "Category Changed", f: isSub ? "Subcategory deleted" : "Category deleted", o: nm0, n: moved ? moved + " product(s) moved" + (op.to ? " to " + op.to : " (subcategory cleared)") : "", rm: op.rm || "" });
       }
+    } else if (op.k === "brand") {
+      const nm = String(op.n || "").trim(), L = (D.S.brands || []).slice();
+      if (op.a === "add") { need(pm.keeper, "Only the admin or a store keeper can add brands"); need(nm, "Type the brand name"); if (!L.some(x => stkKey_(x) === stkKey_(nm))) { L.push(nm); L.sort((a, b) => a.localeCompare(b)); stkSetSetting_("brands", L); A({ act: "Settings Changed", f: "Brand added", n: nm }); } res.brand = (stkSettings_().brands || []).find(x => stkKey_(x) === stkKey_(nm)) || nm; }
+      else if (op.a === "del") { need(pm.admin, "Only the admin can remove brands"); stkSetSetting_("brands", L.filter(x => x !== nm)); A({ act: "Settings Changed", f: "Brand removed", o: nm, rm: "Products keep their brand" }); }
+      D.S = stkSettings_();
     } else if (op.k === "settings") {
       need(pm.admin, "Only the admin can change stock settings"); const S0 = D.S;
       ["keepers", "units", "statuses"].forEach(k => { if (op[k] && JSON.stringify(op[k]) !== JSON.stringify(S0[k])) { stkSetSetting_(k, op[k]); A({ act: "Settings Changed", f: k === "keepers" ? "Store keepers" : k === "units" ? "Units" : "Furnishing statuses", o: k === "keepers" ? (S0[k] || []).map(stkWho_).join(", ") : (S0[k] || []).join(", "), n: k === "keepers" ? op[k].map(stkWho_).join(", ") : op[k].join(", ") }); } });
       D.S = stkSettings_();
     } else if (op.k === "import") {
       need(pm.admin, "Only the admin can import products"); const L = op.list || []; let added = 0, skipped = 0, np = +(props_().getProperty("STK_NP") || 0), sl = P.reduce((m, r) => Math.max(m, r.v["Serial No"] || 0), 0);
-      const keys = {}; P.forEach(r => { if (r.v["Product ID"]) keys[stkKey_(r.v["Product Name"]) + "|" + stkKey_(r.v.Specification)] = 1; });
+      const keys = {}; P.forEach(r => { if (r.v["Product ID"]) keys[stkPK_(r.v)] = 1; });
       const rows = [], vs = [];
-      L.forEach(x => { const v = stkClean_(x, pm), k = stkKey_(v["Product Name"]) + "|" + stkKey_(v.Specification); if (!v["Product Name"] || keys[k]) { skipped++; return; } keys[k] = 1; np++; sl++; Object.assign(v, { "Product ID": "P-" + String(np).padStart(6, "0"), "Serial No": sl, Quantity: null, "Stock Value": null, Status: "Active", "Updated At": t0, "Updated By": who }); rows.push(stkRowArr_("P", v)); vs.push(v); added++; stkChg_(v["Product ID"]); A({ act: "Added", pid: v["Product ID"], pn: v["Product Name"], n: stkDesc_(v), rm: "Imported" + (op.src ? " from " + op.src : "") }); });
+      L.forEach(x => { const v = stkClean_(x, pm), k = stkPK_(v); if (!v["Product Name"] || keys[k]) { skipped++; return; } keys[k] = 1; np++; sl++; Object.assign(v, { "Product ID": "P-" + String(np).padStart(6, "0"), "Serial No": sl, Quantity: null, "Stock Value": null, Status: "Active", "Updated At": t0, "Updated By": who }); rows.push(stkRowArr_("P", v)); vs.push(v); added++; stkChg_(v["Product ID"]); A({ act: "Added", pid: v["Product ID"], pn: v["Product Name"], n: stkDesc_(v), rm: "Imported" + (op.src ? " from " + op.src : "") }); });
       props_().setProperty("STK_NP", String(np));
       if (rows.length) { const sh = stkSheet_("P"), r0 = Math.max(sh.getLastRow(), 1) + 1, rg = sh.getRange(r0, 1, rows.length, STK_H.P.length); rg.setNumberFormats(rows.map(() => STK_H.P.map(h => STK_NUM[h] ? "General" : "@"))); rg.setValues(rows); vs.forEach((v, i) => P.push({ r: r0 + i, v })); }
       res.added = added; res.skipped = skipped;
@@ -387,7 +398,7 @@ function crmStockSave(o) {
 }
 function stkClean_(x, pm) {
   x = x || {}; const v = {}, s = k => String(x[k] === undefined || x[k] === null ? "" : x[k]).trim();
-  ["Product Name", "Product Code", "Category", "Subcategory", "Specification", "Description", "Unit"].forEach(k => v[k] = s(k));
+  ["Product Name", "Product Code", "Brand", "Category", "Subcategory", "Specification", "Description", "Unit"].forEach(k => v[k] = s(k));
   const ml = stkNum_(x["Min Level"]); v["Min Level"] = ml === null || !isFinite(ml) || ml < 0 ? null : ml;
   if (pm.admin) { const rt = stkNum_(x.Rate); v.Rate = rt === null || !isFinite(rt) || rt < 0 ? null : rt; }
   return v;
@@ -401,9 +412,13 @@ function setupStockSync() {
   stkProtect_();
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "stkOnChange").forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("stkOnChange").forSpreadsheet(ss_()).onChange().create();
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "stkTimer").forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger("stkTimer").timeBased().everyMinutes(15).create();
   const lock = LockService.getScriptLock(); lock.waitLock(30000); try { stkSync_("App"); stkLogChanges_(); } finally { lock.releaseLock(); }
   Logger.log("Stock & Store is ready. Sheets: " + Object.keys(STK).map(k => STK[k]).join(", ") + ". Direct edits in these sheets are now recorded in Stock_Audit.");
 }
+// Runs by itself every 15 minutes in the background, so no user waits for the full check.
+function stkTimer() { const lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return; try { stkSync_("Google Sheet", ""); stkLogChanges_(); } finally { lock.releaseLock(); } }
 // Runs by itself when someone edits the spreadsheet directly. Only reacts to the Stock sheets.
 function stkOnChange(e) {
   let who = ""; try { who = (e && e.user && e.user.getEmail && e.user.getEmail()) || ""; } catch (x) {}
