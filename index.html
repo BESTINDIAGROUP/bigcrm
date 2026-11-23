@@ -92,6 +92,22 @@
   });
 })();
 </script>
+<script>
+/* ===== keep the CRM login and the page you were on across a refresh (Ctrl+R) =====
+   Some browsers (iPhone Safari, Brave, private windows) do not keep data saved inside the CRM frame,
+   so the CRM also hands its login to this page, and asks for it back when it starts. */
+(function(){
+  var K='big-crm-sess',V='big-crm-view';
+  function ok(o){return /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/.test(o||'')}
+  function get(k){try{var s=localStorage.getItem(k);return s?JSON.parse(s):null}catch(e){return null}}
+  function put(k,v){try{v?localStorage.setItem(k,JSON.stringify(v)):localStorage.removeItem(k)}catch(e){}}
+  window.addEventListener('message',function(ev){var d=ev.data||{};if(!ok(ev.origin))return;
+    if(d.bigSessQ){try{ev.source.postMessage({bigSess:get(K),bigView:get(V)},ev.origin)}catch(e){}}
+    if('bigSessSet' in d){put(K,d.bigSessSet);if(!d.bigSessSet)put(V,null)}
+    if('bigViewSet' in d)put(V,d.bigViewSet);
+  });
+})();
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
