@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="BIG CRM">
 <style>
-  html,body{margin:0;height:100%;background:#ffffff;overflow:hidden}
+  html,body{margin:0;height:100%;background:#ffffff;overflow:hidden;overscroll-behavior-x:none}
   iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff}
   #splash{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;overflow:hidden;
     background:#fff;transition:opacity .5s ease}
@@ -90,6 +90,19 @@
     if(d.bigNotify)show(d.bigNotify);
     if(typeof d.bigCount==='number'){document.title=d.bigCount>0?'('+d.bigCount+') '+base:base;try{if(navigator.setAppBadge){d.bigCount>0?navigator.setAppBadge(d.bigCount):navigator.clearAppBadge()}}catch(e){}}
   });
+})();
+</script>
+<script>
+/* ===== phone "Back" gesture (swiping in from the side) must not leave the app =====
+   An extra page is added to the history after the first touch, so "Back" lands here instead of
+   leaving. The CRM is then told, and it closes an open pop-up or the menu (never a form you are typing in). */
+(function(){
+  var armed=false;
+  function ok(o){return /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/.test(o||'')}
+  function arm(){if(armed)return;armed=true;try{history.pushState({bigGuard:1},'',location.href)}catch(e){armed=false}}
+  window.addEventListener('popstate',function(){armed=false;try{document.getElementById('app').contentWindow.postMessage({bigBack:1},'*')}catch(e){}});
+  window.addEventListener('message',function(ev){var d=ev.data||{};if(d&&d.bigTouch&&ok(ev.origin))arm()});
+  document.addEventListener('pointerdown',arm,true);
 })();
 </script>
 <script>
